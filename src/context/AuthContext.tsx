@@ -1,69 +1,97 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { User, UserRole } from '@/types';
-import { currentUser, workers } from '@/data/mockData';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { User, Session } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
+
+type AppRole = 'admin' | 'customer' | 'worker';
 
 interface AuthContextType {
   user: User | null;
+  session: Session | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string, role: UserRole) => Promise<boolean>;
-  logout: () => void;
-  switchRole: (role: UserRole) => void;
+  isLoading: boolean;
+  userRole: AppRole | null;
+  signOut: () => Promise<void>;
+  refreshRole: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [userRole, setUserRole] = useState<AppRole | null>(null);
 
-  const login = async (email: string, password: string, role: UserRole): Promise<boolean> => {
-    // Mock login - in production, this would call your backend
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  const fetchUserRole = async (userId: string) => {
+    const { data: roles } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId);
     
-    if (role === 'customer') {
-      setUser(currentUser);
-    } else if (role === 'worker') {
-      setUser(workers[0]);
-    } else if (role === 'admin') {
-      setUser({
-        id: 'admin1',
-        name: 'Admin User',
-        email: 'admin@homefix.com',
-        phone: '+1 234 567 8999',
-        role: 'admin',
-        createdAt: new Date('2022-01-01'),
-      });
+    if (roles && roles.length > 0) {
+      setUserRole(roles[0].role as AppRole);
+    } else {
+      setUserRole('customer'); // Default role
     }
-    return true;
   };
 
-  const logout = () => {
+  const refreshRole = async () => {
+    if (user) {
+      await fetchUserRole(user.id);
+    }
+  };
+
+  useEffect(() => {
+    // Set up auth state listener FIRST
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Defer Supabase calls with setTimeout to prevent deadlock
+          setTimeout(() => {
+            fetchUserRole(session.user.id);
+          }, 0);
+        } else {
+          setUserRole(null);
+        }
+        
+        setIsLoading(false);
+      }
+    );
+
+    // THEN check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        fetchUserRole(session.user.id);
+      }
+      
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-  };
-
-  const switchRole = (role: UserRole) => {
-    if (role === 'customer') {
-      setUser(currentUser);
-    } else if (role === 'worker') {
-      setUser(workers[0]);
-    } else if (role === 'admin') {
-      setUser({
-        id: 'admin1',
-        name: 'Admin User',
-        email: 'admin@homefix.com',
-        phone: '+1 234 567 8999',
-        role: 'admin',
-        createdAt: new Date('2022-01-01'),
-      });
-    }
+    setSession(null);
+    setUserRole(null);
   };
 
   return (
     <AuthContext.Provider value={{
       user,
-      isAuthenticated: !!user,
-      login,
-      logout,
-      switchRole,
+      session,
+      isAuthenticated: !!session,
+      isLoading,
+      userRole,
+      signOut,
+      refreshRole,
     }}>
       {children}
     </AuthContext.Provider>
