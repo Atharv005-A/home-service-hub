@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Booking } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar, Clock, MapPin, User, DollarSign } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, DollarSign, Navigation } from 'lucide-react';
 import { format } from 'date-fns';
+import WorkerTrackingMap from '@/components/maps/WorkerTrackingMap';
 
 interface BookingCardProps {
   booking: Booking;
@@ -28,8 +29,12 @@ const paymentColors: Record<string, string> = {
 };
 
 export default function BookingCard({ booking, showActions = true, onViewDetails, onCancel }: BookingCardProps) {
+  const [showTracking, setShowTracking] = useState(false);
   const statusLabel = booking.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   const paymentLabel = booking.paymentStatus.charAt(0).toUpperCase() + booking.paymentStatus.slice(1);
+  
+  const isActiveBooking = ['assigned', 'in_progress'].includes(booking.status);
+  const canTrack = isActiveBooking && booking.workerId;
 
   return (
     <div className="bg-card rounded-xl p-5 shadow-card border border-border/50 hover:shadow-lg transition-shadow">
@@ -69,6 +74,19 @@ export default function BookingCard({ booking, showActions = true, onViewDetails
         )}
       </div>
 
+      {/* Worker Tracking Map */}
+      {showTracking && canTrack && (
+        <div className="mb-4 animate-fade-in">
+          <WorkerTrackingMap
+            workerId={booking.workerId}
+            serviceLatitude={booking.location?.lat}
+            serviceLongitude={booking.location?.lng}
+            height="200"
+            showWorkerInfo={true}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between pt-4 border-t border-border">
         <div className="flex items-center gap-1.5">
           <DollarSign className="h-5 w-5 text-accent" />
@@ -77,6 +95,16 @@ export default function BookingCard({ booking, showActions = true, onViewDetails
         
         {showActions && (
           <div className="flex gap-2">
+            {canTrack && (
+              <Button 
+                variant={showTracking ? "secondary" : "outline"} 
+                size="sm" 
+                onClick={() => setShowTracking(!showTracking)}
+              >
+                <Navigation className="h-4 w-4 mr-1" />
+                {showTracking ? 'Hide Map' : 'Track Worker'}
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => onViewDetails?.(booking)}>
               View Details
             </Button>

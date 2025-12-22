@@ -16,6 +16,7 @@ import { CalendarIcon, Clock, MapPin, DollarSign, CheckCircle, Loader2, Navigati
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import GoogleMapEmbed from '@/components/maps/GoogleMapEmbed';
+import WorkerTrackingMap from '@/components/maps/WorkerTrackingMap';
 
 export default function BookService() {
   const { serviceId } = useParams();
@@ -276,24 +277,12 @@ export default function BookService() {
                   )}
                 </div>
 
-                {/* Location Map with Worker Tracking Info */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold text-foreground flex items-center gap-2">
-                      <MapPin className="h-4 w-4" />
-                      Service Location
-                    </h3>
-                    <span className="text-xs bg-accent/10 text-accent px-2 py-1 rounded-full flex items-center gap-1">
-                      <Navigation className="h-3 w-3" />
-                      Worker tracking available after assignment
-                    </span>
-                  </div>
-                  <GoogleMapEmbed 
-                    height="200"
-                    zoom={14}
-                    className="shadow-sm"
-                  />
-                </div>
+                {/* Live Worker Tracking Map */}
+                <WorkerTrackingMap
+                  workerId={null} // Will be populated after booking is assigned
+                  height="250"
+                  showWorkerInfo={true}
+                />
 
                 {/* Payment Placeholder */}
                 <div className="bg-accent/10 border border-accent/20 rounded-xl p-5">
