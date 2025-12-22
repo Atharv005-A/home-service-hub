@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { services } from '@/data/mockData';
 import { useAuth } from '@/context/AuthContext';
 import { format } from 'date-fns';
-import { CalendarIcon, Clock, MapPin, DollarSign, CheckCircle, Loader2 } from 'lucide-react';
+import { CalendarIcon, Clock, MapPin, DollarSign, CheckCircle, Loader2, Navigation } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import GoogleMapEmbed from '@/components/maps/GoogleMapEmbed';
 
 export default function BookService() {
   const { serviceId } = useParams();
@@ -155,12 +156,20 @@ export default function BookService() {
                   </div>
                 </div>
 
-                {/* Map Placeholder */}
-                <div className="h-64 rounded-xl bg-muted flex items-center justify-center border-2 border-dashed border-border">
-                  <div className="text-center text-muted-foreground">
-                    <MapPin className="h-12 w-12 mx-auto mb-2" />
-                    <p>Map integration available with Cloud</p>
-                  </div>
+                {/* Service Location Map */}
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Navigation className="h-4 w-4" />
+                    Service Area Map
+                  </Label>
+                  <GoogleMapEmbed 
+                    height="280"
+                    zoom={12}
+                    className="shadow-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Map shows default service area. Worker location will be tracked after booking confirmation.
+                  </p>
                 </div>
               </div>
             )}
@@ -265,6 +274,25 @@ export default function BookService() {
                       <p className="font-medium">{formData.description}</p>
                     </div>
                   )}
+                </div>
+
+                {/* Location Map with Worker Tracking Info */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-foreground flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      Service Location
+                    </h3>
+                    <span className="text-xs bg-accent/10 text-accent px-2 py-1 rounded-full flex items-center gap-1">
+                      <Navigation className="h-3 w-3" />
+                      Worker tracking available after assignment
+                    </span>
+                  </div>
+                  <GoogleMapEmbed 
+                    height="200"
+                    zoom={14}
+                    className="shadow-sm"
+                  />
                 </div>
 
                 {/* Payment Placeholder */}
