@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '@/components/layout/Header';
 import Footer from '@/components/layout/Footer';
@@ -8,13 +8,38 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { bookings } from '@/data/mockData';
 import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { Calendar, Clock, CheckCircle, XCircle, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function CustomerDashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('all');
+  const [userName, setUserName] = useState<string>('');
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      navigate('/auth');
+    }
+  }, [isLoading, isAuthenticated, navigate]);
+
+  useEffect(() => {
+    if (user) {
+      supabase
+        .from('profiles')
+        .select('name')
+        .eq('user_id', user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.name) {
+            setUserName(data.name);
+          } else {
+            setUserName(user.email?.split('@')[0] || 'User');
+          }
+        });
+    }
+  }, [user]);
 
   const customerBookings = bookings.filter(b => b.customerId === 'c1');
   
@@ -38,6 +63,14 @@ export default function CustomerDashboard() {
     toast.success(`Booking #${booking.id} cancelled successfully`);
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Header />
@@ -48,7 +81,7 @@ export default function CustomerDashboard() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
               <h1 className="font-display text-3xl font-bold text-foreground">
-                Welcome back, {user?.name?.split(' ')[0]}!
+                Welcome back, {userName.split(' ')[0] || 'there'}!
               </h1>
               <p className="text-muted-foreground">Manage your home service bookings</p>
             </div>

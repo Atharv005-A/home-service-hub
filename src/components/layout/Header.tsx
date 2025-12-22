@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,18 +14,37 @@ import {
 import { Home, Menu, X, User, LogOut, Settings, Bell } from 'lucide-react';
 
 export default function Header() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, signOut, userRole } = useAuth();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userName, setUserName] = useState<string>('');
 
-  const handleLogout = () => {
-    logout();
+  useEffect(() => {
+    if (user) {
+      // Get user name from profile
+      supabase
+        .from('profiles')
+        .select('name')
+        .eq('user_id', user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.name) {
+            setUserName(data.name);
+          } else {
+            setUserName(user.email?.split('@')[0] || 'User');
+          }
+        });
+    }
+  }, [user]);
+
+  const handleLogout = async () => {
+    await signOut();
     navigate('/');
   };
 
   const getDashboardLink = () => {
-    if (!user) return '/';
-    switch (user.role) {
+    if (!userRole) return '/customer';
+    switch (userRole) {
       case 'customer':
         return '/customer';
       case 'worker':
@@ -32,7 +52,7 @@ export default function Header() {
       case 'admin':
         return '/admin';
       default:
-        return '/';
+        return '/customer';
     }
   };
 
@@ -76,16 +96,16 @@ export default function Header() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="flex items-center gap-2 px-2">
                     <div className="h-8 w-8 rounded-full bg-gradient-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
-                      {user.name.charAt(0)}
+                      {userName.charAt(0).toUpperCase()}
                     </div>
-                    <span className="text-sm font-medium">{user.name}</span>
+                    <span className="text-sm font-medium">{userName}</span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>
                     <div className="flex flex-col">
-                      <span>{user.name}</span>
-                      <span className="text-xs text-muted-foreground capitalize">{user.role}</span>
+                      <span>{userName}</span>
+                      <span className="text-xs text-muted-foreground capitalize">{userRole}</span>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
@@ -107,10 +127,10 @@ export default function Header() {
             </>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => navigate('/login')}>
+              <Button variant="ghost" onClick={() => navigate('/auth')}>
                 Log in
               </Button>
-              <Button variant="hero" onClick={() => navigate('/register')}>
+              <Button variant="hero" onClick={() => navigate('/auth')}>
                 Get Started
               </Button>
             </>
@@ -183,7 +203,7 @@ export default function Header() {
                     variant="outline"
                     className="w-full"
                     onClick={() => {
-                      navigate('/login');
+                      navigate('/auth');
                       setMobileMenuOpen(false);
                     }}
                   >
@@ -193,7 +213,7 @@ export default function Header() {
                     variant="hero"
                     className="w-full"
                     onClick={() => {
-                      navigate('/register');
+                      navigate('/auth');
                       setMobileMenuOpen(false);
                     }}
                   >
