@@ -11,7 +11,15 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Please enter a valid email address');
-const phoneSchema = z.string().min(10, 'Please enter a valid phone number').regex(/^\+?[1-9]\d{1,14}$/, 'Please enter a valid phone number with country code (e.g., +1234567890)');
+const phoneSchema = z.string()
+  .min(10, 'Please enter a valid 10-digit phone number')
+  .regex(/^[6-9]\d{9}$/, 'Please enter a valid Indian mobile number (10 digits starting with 6-9)');
+
+// Format phone number with India country code
+const formatIndianPhone = (phone: string): string => {
+  const cleaned = phone.replace(/\D/g, '');
+  return `+91${cleaned}`;
+};
 
 type AuthMethod = 'email' | 'phone';
 type AuthStep = 'input' | 'otp' | 'signup-details';
@@ -90,21 +98,38 @@ export default function Auth() {
         toast.success('Check your email for the verification code!');
         setStep('otp');
       } else {
-        const validation = phoneSchema.safeParse(phone);
+        // Clean the phone number (remove any non-digits)
+        const cleanedPhone = phone.replace(/\D/g, '');
+        
+        const validation = phoneSchema.safeParse(cleanedPhone);
         if (!validation.success) {
           toast.error(validation.error.errors[0].message);
           setIsLoading(false);
           return;
         }
 
+        // Format with India country code
+        const formattedPhone = formatIndianPhone(cleanedPhone);
+
         const { error } = await supabase.auth.signInWithOtp({
-          phone,
+          phone: formattedPhone,
           options: {
             shouldCreateUser: true,
           },
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('phone provider') || error.message.includes('Unsupported')) {
+            toast.error('Phone SMS is not enabled. Please use email for now or contact support.');
+          } else {
+            throw error;
+          }
+          setIsLoading(false);
+          return;
+        }
+        
+        // Store formatted phone for verification
+        setPhone(formattedPhone);
         toast.success('Check your phone for the verification code!');
         setStep('otp');
       }
@@ -319,23 +344,30 @@ export default function Auth() {
 
               <TabsContent value="phone" className="space-y-6">
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
+                  <Label htmlFor="phone">Mobile Number (India)</Label>
                   <div className="relative">
-                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                      +91
+                    </span>
                     <Input
                       id="phone"
                       type="tel"
-                      placeholder="+1234567890"
+                      placeholder="9876543210"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="pl-10"
+                      onChange={(e) => {
+                        // Only allow digits, max 10
+                        const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setPhone(value);
+                      }}
+                      className="pl-12"
+                      maxLength={10}
                       onKeyDown={(e) => e.key === 'Enter' && handleSendOtp()}
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">Include country code (e.g., +1 for US)</p>
+                  <p className="text-xs text-muted-foreground">Enter 10-digit mobile number (e.g., 9876543210)</p>
                 </div>
 
-                <Button onClick={handleSendOtp} className="w-full" size="lg" disabled={isLoading || !phone}>
+                <Button onClick={handleSendOtp} className="w-full" size="lg" disabled={isLoading || phone.length !== 10}>
                   {isLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -345,6 +377,10 @@ export default function Auth() {
                     'Continue with Phone'
                   )}
                 </Button>
+                
+                <p className="text-xs text-center text-amber-600 dark:text-amber-400">
+                  Note: SMS OTP requires backend configuration. Use email if phone doesn't work.
+                </p>
               </TabsContent>
             </Tabs>
           )}
