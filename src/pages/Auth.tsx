@@ -185,7 +185,17 @@ export default function Auth() {
 
         if (error) {
           console.error('Verify OTP error:', error);
-          toast.error(error.message || 'Failed to verify OTP');
+          // Try to parse error response
+          try {
+            const errorData = await error.context?.json?.();
+            if (errorData?.error) {
+              toast.error(errorData.error);
+            } else {
+              toast.error('Failed to verify OTP. Please try again.');
+            }
+          } catch {
+            toast.error('Failed to verify OTP. Please try again.');
+          }
           setIsLoading(false);
           return;
         }
