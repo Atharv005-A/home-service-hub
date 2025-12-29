@@ -47,6 +47,18 @@ const sendTwilioSms = async (to: string, body: string): Promise<boolean> => {
   
   if (!response.ok) {
     console.error("Twilio error:", JSON.stringify(data));
+    
+    // Handle specific Twilio errors with user-friendly messages
+    if (data.code === 21608 || data.message?.includes("unverified")) {
+      throw new Error("This phone number needs to be verified in Twilio. For trial accounts, add your number at twilio.com/console/phone-numbers/verified");
+    }
+    if (data.code === 21211) {
+      throw new Error("Invalid phone number format");
+    }
+    if (data.code === 21614) {
+      throw new Error("This phone number cannot receive SMS");
+    }
+    
     throw new Error(data.message || "Failed to send SMS");
   }
 
