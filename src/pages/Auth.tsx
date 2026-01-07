@@ -11,15 +11,7 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp
 import { z } from 'zod';
 
 const emailSchema = z.string().email('Please enter a valid email address');
-const phoneSchema = z.string()
-  .min(10, 'Please enter a valid 10-digit phone number')
-  .regex(/^[6-9]\d{9}$/, 'Please enter a valid Indian mobile number (10 digits starting with 6-9)');
-
-// Format phone number with India country code
-const formatIndianPhone = (phone: string): string => {
-  const cleaned = phone.replace(/\D/g, '');
-  return `+91${cleaned}`;
-};
+const phoneSchema = z.string().min(10, 'Please enter a valid phone number').regex(/^\+?[1-9]\d{1,14}$/, 'Please enter a valid phone number with country code (e.g., +1234567890)');
 
 type AuthMethod = 'email' | 'phone';
 type AuthStep = 'input' | 'otp' | 'signup-details';
@@ -27,12 +19,11 @@ type UserRole = 'customer' | 'worker';
 
 export default function Auth() {
   const navigate = useNavigate();
-  const [authMethod, setAuthMethod] = useState<AuthMethod>('phone');
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('email');
   const [step, setStep] = useState<AuthStep>('input');
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [formattedPhone, setFormattedPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [isNewUser, setIsNewUser] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
@@ -99,39 +90,22 @@ export default function Auth() {
         toast.success('Check your email for the verification code!');
         setStep('otp');
       } else {
-        // Phone OTP via Twilio edge function
-        const cleanedPhone = phone.replace(/\D/g, '');
-        
-        const validation = phoneSchema.safeParse(cleanedPhone);
+        const validation = phoneSchema.safeParse(phone);
         if (!validation.success) {
           toast.error(validation.error.errors[0].message);
           setIsLoading(false);
           return;
         }
 
-        // Format with India country code
-        const formatted = formatIndianPhone(cleanedPhone);
-        setFormattedPhone(formatted);
-
-        // Call our custom SMS OTP edge function
-        const { data, error } = await supabase.functions.invoke('send-sms-otp', {
-          body: { phone: formatted },
+        const { error } = await supabase.auth.signInWithOtp({
+          phone,
+          options: {
+            shouldCreateUser: true,
+          },
         });
 
-        if (error) {
-          console.error('SMS OTP error:', error);
-          toast.error(error.message || 'Failed to send OTP');
-          setIsLoading(false);
-          return;
-        }
-
-        if (data?.error) {
-          toast.error(data.error);
-          setIsLoading(false);
-          return;
-        }
-
-        toast.success('OTP sent to your phone!');
+        if (error) throw error;
+        toast.success('Check your phone for the verification code!');
         setStep('otp');
       }
     } catch (error: any) {
@@ -150,85 +124,29 @@ export default function Auth() {
 
     setIsLoading(true);
     try {
-      if (authMethod === 'email') {
-        // Email OTP verification via Supabase
-        const { data, error } = await supabase.auth.verifyOtp({
-          email,
-          token: otp,
-          type: 'email',
-        });
+      const verifyOptions = authMethod === 'email' 
+        ? { email, token: otp, type: 'email' as const }
+        : { phone, token: otp, type: 'sms' as const };
 
-        if (error) throw error;
+      const { data, error } = await supabase.auth.verifyOtp(verifyOptions);
 
-        if (data.user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('user_id', data.user.id)
-            .maybeSingle();
+      if (error) throw error;
 
-          if (!profile) {
-            setIsNewUser(true);
-            setStep('signup-details');
-          } else {
-            toast.success('Welcome back!');
-          }
-        }
-      } else {
-        // Phone OTP verification via our edge function
-        const { data, error } = await supabase.functions.invoke('verify-sms-otp', {
-          body: { 
-            phone: formattedPhone,
-            otp: otp,
-          },
-        });
+      if (data.user) {
+        // Check if user has a profile (existing user)
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('user_id', data.user.id)
+          .maybeSingle();
 
-        if (error) {
-          console.error('Verify OTP error:', error);
-          // Try to parse error response
-          try {
-            const errorData = await error.context?.json?.();
-            if (errorData?.error) {
-              toast.error(errorData.error);
-            } else {
-              toast.error('Failed to verify OTP. Please try again.');
-            }
-          } catch {
-            toast.error('Failed to verify OTP. Please try again.');
-          }
-          setIsLoading(false);
-          return;
-        }
-
-        if (data?.error) {
-          toast.error(data.error);
-          setIsLoading(false);
-          return;
-        }
-
-        if (data?.success) {
-          if (data.isNewUser) {
-            setIsNewUser(true);
-            setStep('signup-details');
-          } else {
-            // For existing users, we need to sign them in
-            // The edge function should have created a session
-            toast.success('Welcome back!');
-            
-            // Refresh the session to pick up the user
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session) {
-              redirectBasedOnRole(session.user.id);
-            } else {
-              // Try to sign in with magic link if we got an access token
-              if (data.accessToken) {
-                await supabase.auth.verifyOtp({
-                  token_hash: data.accessToken,
-                  type: 'magiclink',
-                });
-              }
-            }
-          }
+        if (!profile) {
+          // New user - show signup details
+          setIsNewUser(true);
+          setStep('signup-details');
+        } else {
+          toast.success('Welcome back!');
+          // Redirect will happen via onAuthStateChange
         }
       }
     } catch (error: any) {
@@ -248,45 +166,34 @@ export default function Auth() {
     setIsLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
-      // For phone auth, we might not have a user yet, so we create one
-      let userId = user?.id;
-      
-      if (!userId && authMethod === 'phone') {
-        // User was created by edge function, need to sign them in
-        const { data, error } = await supabase.functions.invoke('verify-sms-otp', {
-          body: { 
-            phone: formattedPhone,
-            otp: otp,
-          },
-        });
-        
-        if (data?.userId) {
-          userId = data.userId;
+      if (!user) throw new Error('No user found');
+
+      // Update user metadata with role
+      await supabase.auth.updateUser({
+        data: {
+          name: signupData.name,
+          role: selectedRole,
+          phone: signupData.phone || phone,
         }
-      }
+      });
 
-      if (!userId) {
-        throw new Error('No user found. Please try again.');
-      }
-
-      // Update profile
+      // The handle_new_user trigger should create the profile and role
+      // But let's also manually insert to be safe
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
-          user_id: userId,
+          user_id: user.id,
           name: signupData.name,
-          email: email || `phone_${formattedPhone.replace(/\+/g, "")}@servxpert.app`,
-          phone: formattedPhone || signupData.phone,
+          email: user.email || '',
+          phone: signupData.phone || phone,
         }, { onConflict: 'user_id' });
 
       if (profileError) console.error('Profile error:', profileError);
 
-      // Set user role
       const { error: roleError } = await supabase
         .from('user_roles')
         .upsert({
-          user_id: userId,
+          user_id: user.id,
           role: selectedRole,
         }, { onConflict: 'user_id' });
 
@@ -297,7 +204,7 @@ export default function Auth() {
         const { error: workerError } = await supabase
           .from('worker_profiles')
           .upsert({
-            user_id: userId,
+            user_id: user.id,
             specializations: [],
           }, { onConflict: 'user_id' });
 
@@ -336,11 +243,11 @@ export default function Auth() {
         <div className="w-full max-w-md space-y-8 animate-fade-in">
           <div className="text-center">
             <Link to="/" className="inline-flex items-center gap-2 mb-8">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-primary text-primary-foreground">
                 <Home className="h-5 w-5" />
               </div>
               <span className="font-display text-xl font-bold text-foreground">
-                Serv<span className="text-muted-foreground">Xpert</span>
+                Home<span className="text-accent">Fix</span>
               </span>
             </Link>
             
@@ -355,7 +262,7 @@ export default function Auth() {
               <>
                 <h1 className="font-display text-3xl font-bold text-foreground">Verify Code</h1>
                 <p className="text-muted-foreground mt-2">
-                  Enter the 6-digit code sent to {authMethod === 'email' ? email : formattedPhone || phone}
+                  Enter the 6-digit code sent to {authMethod === 'email' ? email : phone}
                 </p>
               </>
             )}
@@ -370,57 +277,16 @@ export default function Auth() {
 
           {step === 'input' && (
             <Tabs value={authMethod} onValueChange={(v) => setAuthMethod(v as AuthMethod)} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-8 bg-muted">
-                <TabsTrigger value="phone" className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                  <Phone className="h-4 w-4" />
-                  Phone
-                </TabsTrigger>
-                <TabsTrigger value="email" className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsList className="grid w-full grid-cols-2 mb-8">
+                <TabsTrigger value="email" className="flex items-center gap-2">
                   <Mail className="h-4 w-4" />
                   Email
                 </TabsTrigger>
+                <TabsTrigger value="phone" className="flex items-center gap-2">
+                  <Phone className="h-4 w-4" />
+                  Phone
+                </TabsTrigger>
               </TabsList>
-
-              <TabsContent value="phone" className="space-y-6">
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Mobile Number (India)</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
-                      +91
-                    </span>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      placeholder="9876543210"
-                      value={phone}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                        setPhone(value);
-                      }}
-                      className="pl-12 h-12 text-lg"
-                      maxLength={10}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendOtp()}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Enter 10-digit mobile number</p>
-                </div>
-
-                <Button 
-                  onClick={handleSendOtp} 
-                  className="w-full h-12 text-base" 
-                  size="lg" 
-                  disabled={isLoading || phone.length !== 10}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Sending OTP...
-                    </>
-                  ) : (
-                    'Get OTP'
-                  )}
-                </Button>
-              </TabsContent>
 
               <TabsContent value="email" className="space-y-6">
                 <div className="space-y-2">
@@ -433,18 +299,13 @@ export default function Auth() {
                       placeholder="Enter your email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10 h-12 text-lg"
+                      className="pl-10"
                       onKeyDown={(e) => e.key === 'Enter' && handleSendOtp()}
                     />
                   </div>
                 </div>
 
-                <Button 
-                  onClick={handleSendOtp} 
-                  className="w-full h-12 text-base" 
-                  size="lg" 
-                  disabled={isLoading || !email}
-                >
+                <Button onClick={handleSendOtp} className="w-full" size="lg" disabled={isLoading || !email}>
                   {isLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -452,6 +313,36 @@ export default function Auth() {
                     </>
                   ) : (
                     'Continue with Email'
+                  )}
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="phone" className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone Number</Label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="phone"
+                      type="tel"
+                      placeholder="+1234567890"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="pl-10"
+                      onKeyDown={(e) => e.key === 'Enter' && handleSendOtp()}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Include country code (e.g., +1 for US)</p>
+                </div>
+
+                <Button onClick={handleSendOtp} className="w-full" size="lg" disabled={isLoading || !phone}>
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Sending Code...
+                    </>
+                  ) : (
+                    'Continue with Phone'
                   )}
                 </Button>
               </TabsContent>
@@ -468,29 +359,24 @@ export default function Auth() {
               <div className="flex justify-center">
                 <InputOTP value={otp} onChange={setOtp} maxLength={6}>
                   <InputOTPGroup>
-                    <InputOTPSlot index={0} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={1} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={2} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={3} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={4} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={5} className="w-12 h-14 text-xl" />
+                    <InputOTPSlot index={0} />
+                    <InputOTPSlot index={1} />
+                    <InputOTPSlot index={2} />
+                    <InputOTPSlot index={3} />
+                    <InputOTPSlot index={4} />
+                    <InputOTPSlot index={5} />
                   </InputOTPGroup>
                 </InputOTP>
               </div>
 
-              <Button 
-                onClick={handleVerifyOtp} 
-                className="w-full h-12 text-base" 
-                size="lg" 
-                disabled={isLoading || otp.length !== 6}
-              >
+              <Button onClick={handleVerifyOtp} className="w-full" size="lg" disabled={isLoading || otp.length !== 6}>
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Verifying...
                   </>
                 ) : (
-                  'Verify & Continue'
+                  'Verify Code'
                 )}
               </Button>
 
@@ -498,7 +384,7 @@ export default function Auth() {
                 Didn't receive the code?{' '}
                 <button
                   onClick={handleSendOtp}
-                  className="text-foreground font-medium hover:underline"
+                  className="text-primary font-medium hover:underline"
                   disabled={isLoading}
                 >
                   Resend
@@ -547,7 +433,6 @@ export default function Auth() {
                     placeholder="Enter your full name"
                     value={signupData.name}
                     onChange={(e) => setSignupData({ ...signupData, name: e.target.value })}
-                    className="h-12"
                   />
                 </div>
 
@@ -555,26 +440,21 @@ export default function Auth() {
                   <div className="space-y-2">
                     <Label htmlFor="signup-phone">Phone Number (optional)</Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">+91</span>
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="signup-phone"
                         type="tel"
-                        placeholder="9876543210"
+                        placeholder="+1234567890"
                         value={signupData.phone}
                         onChange={(e) => setSignupData({ ...signupData, phone: e.target.value })}
-                        className="pl-12 h-12"
+                        className="pl-10"
                       />
                     </div>
                   </div>
                 )}
               </div>
 
-              <Button 
-                onClick={handleCompleteSignup} 
-                className="w-full h-12 text-base" 
-                size="lg" 
-                disabled={isLoading}
-              >
+              <Button onClick={handleCompleteSignup} className="w-full" size="lg" disabled={isLoading}>
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -593,10 +473,10 @@ export default function Auth() {
       <div className="hidden lg:flex flex-1 bg-gradient-hero items-center justify-center p-12">
         <div className="max-w-md text-center text-primary-foreground">
           <div className="mb-8">
-            {authMethod === 'phone' ? (
-              <Phone className="h-24 w-24 mx-auto opacity-80" />
+            {authMethod === 'email' ? (
+              <Mail className="h-24 w-24 mx-auto text-accent" />
             ) : (
-              <Mail className="h-24 w-24 mx-auto opacity-80" />
+              <Phone className="h-24 w-24 mx-auto text-accent" />
             )}
           </div>
           <h2 className="font-display text-3xl font-bold mb-4">
@@ -604,7 +484,7 @@ export default function Auth() {
             {step === 'otp' && 'One-Time Password'}
             {step === 'signup-details' && 'Almost There!'}
           </h2>
-          <p className="text-primary-foreground/70">
+          <p className="text-primary-foreground/80">
             {step === 'input' && 'No password needed. We\'ll send you a verification code to sign in securely.'}
             {step === 'otp' && 'Enter the 6-digit code we sent you to verify your identity.'}
             {step === 'signup-details' && 'Just a few more details and you\'ll be ready to go!'}
